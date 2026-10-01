@@ -5,7 +5,7 @@ import io
 from datetime import datetime
 
 # ==========================================
-# 1. إعداد قاعدة البيانات (نسخة جديدة V2)
+# 1. إعداد قاعدة البيانات (نسخة V2)
 # ==========================================
 conn = sqlite3.connect('master_gold_erp_v2.db', check_same_thread=False)
 c = conn.cursor()
@@ -38,20 +38,17 @@ menu = ["تسجيل أوردر جديد", "جرد الخزنة", "تجميع و�
 choice = st.sidebar.radio("القائمة الرئيسية", menu)
 
 # ==========================================
-# 3. شاشة تسجيل أوردر جديد (التصميم الجديد)
+# 3. شاشة تسجيل أوردر جديد
 # ==========================================
 if choice == "تسجيل أوردر جديد":
     st.header("📝 تسجيل أوردر فرع جديد")
     
-    # القسم الأول: ثوابت الفرع (ثابتة ومكشوفة)
     col1, col2, col3 = st.columns(3)
     batch_code = col1.text_input("كود التجميعة/الأسبوع (مثال: أسبوع 1 - شهر 10)", "أسبوع 1")
     branch_name = col2.text_input("اسم الفرع (مثال: فرع التجمع الخامس)")
     order_date = col3.date_input("تاريخ الأوردر", datetime.today())
     
     st.markdown("---")
-    
-    # القسم الثاني: جدول الإدخال السريع
     st.subheader("إضافة أصناف للأوردر")
     
     if 'temp_order' not in st.session_state:
@@ -74,7 +71,7 @@ if choice == "تسجيل أوردر جديد":
             model_data = c.fetchone()
             
             if not model_data:
-                st.warning(f"⚠️ الموديل '{new_code}' غير مسجل. يرجى إضافته للكتالوج أولاً (استخدم قائمة 'كتالوج الموديلات').")
+                st.warning(f"⚠️ الموديل '{new_code}' غير مسجل. يرجى إضافته للكتالوج أولاً.")
             else:
                 category, department, unit, weight = model_data
                 actual_qty = new_qty * 2 if unit == "جوز" else new_qty
@@ -89,7 +86,6 @@ if choice == "تسجيل أوردر جديد":
                 })
                 st.success(f"تم الإضافة للجدول المؤقت: {new_code}")
 
-    # القسم الرابع: جدول العرض الفوري المجمع (الماتريكس)
     if st.session_state.temp_order:
         st.markdown("---")
         st.subheader(f"🛒 الجدول المؤقت (الفرع: {branch_name} | التجميعة: {batch_code})")
@@ -138,7 +134,7 @@ if choice == "تسجيل أوردر جديد":
                     
                 conn.commit()
                 st.session_state.temp_order = [] 
-                st.success(f"✅ تم حفظ أوردر {branch_name} تحت تجميعة ({batch_code}) وخصم الكميات المتوفرة من الخزنة!")
+                st.success(f"✅ تم حفظ الأوردر بنجاح وخصم الكميات المتوفرة!")
                 st.rerun()
                 
         if st.button("🗑️ مسح الجدول المؤقت"):
@@ -154,22 +150,21 @@ elif choice == "جرد الخزنة":
     with st.form("vault_form"):
         col1, col2, col3 = st.columns(3)
         v_model = col1.text_input("كود الموديل").strip().upper()
-        v_size = col2.text_input("المقاس (اكتب 'بدون مقاس' لغير الغوايش)")
-        v_qty = col3.number_input("العدد (إضافة أو تعديل)", min_value=0, step=1)
+        v_size = col2.text_input("المقاس")
+        v_qty = col3.number_input("العدد", min_value=0, step=1)
         
         if st.form_submit_button("تحديث الخزنة"):
             if v_model:
                 c.execute("INSERT OR REPLACE INTO Vault (ModelCode, Size, Quantity) VALUES (?,?,?)", (v_model, v_size, v_qty))
                 conn.commit()
-                st.success("✅ تم تحديث الخزنة بنجاح.")
+                st.success("✅ تم التحديث.")
                 
     st.markdown("---")
-    st.subheader("الرصيد الحالي")
-    vault_df = pd.read_sql_query("SELECT ModelCode as 'الكود', Size as 'المقاس', Quantity as 'العدد المتوفر' FROM Vault WHERE Quantity > 0", conn)
+    vault_df = pd.read_sql_query("SELECT ModelCode as 'الكود', Size as 'المقاس', Quantity as 'العدد' FROM Vault WHERE Quantity > 0", conn)
     st.dataframe(vault_df, use_container_width=True)
 
 # ==========================================
-# 5. التخطيط واستخراج أوامر التشغيل
+# 5. التخطيط واستخراج أوامر التشغيل (مُحدث)
 # ==========================================
 elif choice == "تجميع وإصدار أوامر التشغيل":
     st.header("⚙️ أوامر التشغيل المجمعة (للنواقص فقط)")
@@ -182,28 +177,51 @@ elif choice == "تجميع وإصدار أوامر التشغيل":
         batches_list = batches_df['BatchCode'].tolist()
         selected_batch = st.selectbox("📌 اختر كود التجميعة (الأسبوع) لاستخراج نواقصه:", batches_list)
         
+        # جلب البيانات شاملة "الصنف" (Category) للتفرقة بين الغوايش وغيرها
         orders_df = pd.read_sql_query("""
             SELECT 
-                o.ModelCode, m.Department, o.Size, o.Notes, SUM(o.ActualQty) as TotalRequired 
+                o.ModelCode, m.Category, m.Department, o.Size, o.Notes, SUM(o.ActualQty) as TotalRequired 
             FROM OrderDetails o
             JOIN Models m ON o.ModelCode = m.ModelCode
             JOIN Orders ord ON o.OrderID = ord.OrderID
             WHERE ord.BatchCode = ?
-            GROUP BY o.ModelCode, m.Department, o.Size, o.Notes
+            GROUP BY o.ModelCode, m.Category, m.Department, o.Size, o.Notes
         """, conn, params=(selected_batch,))
         
         if orders_df.empty:
             st.info("👍 لا توجد نواقص للتشغيل في هذه التجميعة.")
         else:
-            st.dataframe(orders_df.rename(columns={'ModelCode':'الكود', 'Department':'القسم', 'Size':'المقاس', 'Notes':'ملاحظات', 'TotalRequired':'العدد المطلوب (نواقص)'}), use_container_width=True)
+            # عرض البيانات على الشاشة
+            st.dataframe(orders_df.rename(columns={'ModelCode':'الكود', 'Category': 'الصنف', 'Department':'القسم', 'Size':'المقاس', 'Notes':'ملاحظات', 'TotalRequired':'العدد المطلوب'}), use_container_width=True)
             
+            # تصدير الإكسيل بتنسيق الماتريكس للغوايش
             if st.button(f"📥 تحميل أوامر تشغيل مصنع ({selected_batch})", type="primary"):
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    for dept in orders_df['Department'].unique():
-                        dept_df = orders_df[orders_df['Department'] == dept].drop(columns=['Department'])
-                        dept_df = dept_df.sort_values(by=['Size'])
-                        dept_df.rename(columns={'ModelCode':'الكود', 'Size':'المقاس', 'Notes':'ملاحظات', 'TotalRequired':'العدد المطلوب'}).to_excel(writer, sheet_name=f'قسم_{dept}', index=False)
+                    
+                    # 1. معالجة الغوايش وتحويلها إلى Pivot (ماتريكس)
+                    bangles_df = orders_df[orders_df['Category'] == 'غويشة'].copy()
+                    if not bangles_df.empty:
+                        pivot_bangles = bangles_df.pivot_table(index='ModelCode', columns='Size', values='TotalRequired', aggfunc='sum', fill_value=0)
+                        
+                        all_sizes = ["19", "20", "21", "22", "23", "24"]
+                        for s in all_sizes:
+                            if s not in pivot_bangles.columns:
+                                pivot_bangles[s] = 0
+                        pivot_bangles = pivot_bangles[all_sizes]
+                        pivot_bangles.columns = [f"مقاس {s}" for s in pivot_bangles.columns]
+                        pivot_bangles['إجمالي الصنف'] = pivot_bangles.sum(axis=1)
+                        
+                        pivot_bangles.index.name = 'الكود'
+                        pivot_bangles.to_excel(writer, sheet_name='غوايش_ماتريكس')
+
+                    # 2. معالجة باقي الأصناف بناءً على أقسام التشغيل (شمع، هولو...)
+                    other_df = orders_df[orders_df['Category'] != 'غويشة'].copy()
+                    if not other_df.empty:
+                        for dept in other_df['Department'].unique():
+                            dept_df = other_df[other_df['Department'] == dept].drop(columns=['Department', 'Category'])
+                            dept_df = dept_df.sort_values(by=['Size'])
+                            dept_df.rename(columns={'ModelCode':'الكود', 'Size':'المقاس', 'Notes':'ملاحظات', 'TotalRequired':'العدد المطلوب'}).to_excel(writer, sheet_name=f'قسم_{dept}', index=False)
                 
                 st.download_button(
                     label="تحميل الملف (Excel)",
@@ -217,22 +235,21 @@ elif choice == "تجميع وإصدار أوامر التشغيل":
                 c.execute("DELETE FROM OrderDetails WHERE OrderID IN (SELECT OrderID FROM Orders WHERE BatchCode=?)", (selected_batch,))
                 c.execute("DELETE FROM Orders WHERE BatchCode=?", (selected_batch,))
                 conn.commit()
-                st.success(f"تم أرشفة ومسح أوامر تجميعة '{selected_batch}' بنجاح.")
+                st.success(f"تم أرشفة تجميعة '{selected_batch}' بنجاح.")
                 st.rerun()
 
 # ==========================================
 # 6. كتالوج الموديلات
 # ==========================================
 elif choice == "كتالوج الموديلات":
-    st.header("📚 الكتالوج وقاعدة بيانات الموديلات")
-    
-    with st.expander("➕ إضافة موديل جديد للكتالوج"):
+    st.header("📚 الكتالوج")
+    with st.expander("➕ إضافة موديل جديد"):
         with st.form("new_model_catalog_form"):
             c_code = st.text_input("كود الموديل").strip().upper()
             c_cat = st.selectbox("الصنف", ["غويشة", "خاتم", "دبلة", "كوليه", "حلق", "أسورة", "سلسلة", "انسيال", "طقم"])
             c_dept = st.selectbox("قسم التشغيل", ["شمع", "هولو", "سي إن سي", "صب"])
-            c_unit = st.selectbox("طريقة البيع (للحسابات)", ["جوز", "فردة", "طقم"])
-            c_weight = st.number_input("الوزن التقريبي (جرام)", min_value=0.0, step=0.1)
+            c_unit = st.selectbox("طريقة البيع", ["جوز", "فردة", "طقم"])
+            c_weight = st.number_input("الوزن (جرام)", min_value=0.0, step=0.1)
             
             if st.form_submit_button("حفظ"):
                 if c_code:
@@ -248,13 +265,4 @@ elif choice == "كتالوج الموديلات":
 # ==========================================
 elif choice == "تعديل/إلغاء أوردر":
     st.header("🔧 تعديل أو إلغاء أوردر")
-    st.write("هنا يمكنك مراجعة الأوردرات المسجلة. (الميزة قيد التطوير الكامل - سيتم إضافتها في التحديث القادم حسب الحاجة).")
-    
-    all_orders = pd.read_sql_query("""
-        SELECT o.BatchCode as 'التجميعة', o.OrderID as 'رقم الأوردر', o.Branch as 'الفرع', o.OrderDate as 'التاريخ', 
-               od.ModelCode as 'الكود', od.Size as 'المقاس', od.RequestedQty as 'الكمية المطلوبة'
-        FROM Orders o
-        JOIN OrderDetails od ON o.OrderID = od.OrderID
-        ORDER BY o.BatchCode DESC, o.OrderID DESC
-    """, conn)
-    st.dataframe(all_orders, use_container_width=True)
+    st.write("قيد التطوير.")
