@@ -51,6 +51,9 @@ if choice == "تسجيل أوردر جديد":
     st.subheader("إضافة موديل للأوردر")
     model_code = st.text_input("كود الموديل").strip().upper()
     
+    # متغير لحفظ رقم الأوردر الحالي لعرض جدوله
+    current_order_id = None
+
     if model_code:
         c.execute("SELECT Category, Department, Unit, Weight FROM Models WHERE ModelCode=?", (model_code,))
         model_data = c.fetchone()
@@ -86,21 +89,75 @@ if choice == "تسجيل أوردر جديد":
                 if st.form_submit_button("إضافة للأوردر"):
                     if branch_name:
                         c.execute("SELECT OrderID FROM Orders WHERE Branch=? AND OrderDate=?", (branch_name, str(order_date)))
-                        order_id = c.fetchone()
-                        if not order_id:
+                        order_record = c.fetchone()
+                        if not order_record:
                             c.execute("INSERT INTO Orders (Branch, OrderDate) VALUES (?,?)", (branch_name, str(order_date)))
-                            order_id = c.lastrowid
+                            current_order_id = c.lastrowid
                         else:
-                            order_id = order_id[0]
+                            current_order_id = order_record[0]
                         
                         actual_qty = req_qty * 2 if unit == "جوز" else req_qty
                         
                         c.execute("INSERT INTO OrderDetails (OrderID, ModelCode, Size, RequestedQty, ActualQty, Notes) VALUES (?,?,?,?,?,?)",
-                                  (order_id, model_code, str(size), req_qty, actual_qty, notes))
+                                  (current_order_id, model_code, str(size), req_qty, actual_qty, notes))
                         conn.commit()
                         st.success(f"✅ تم إضافة الصنف للأوردر! (العدد الفعلي للتشغيل: {actual_qty} قطعة)")
                     else:
                         st.error("برجاء إدخال اسم الفرع أولاً!")
+
+    # ---------------------------------------------------------
+    # عرض جدول "الماتريكس" (نفس شكل الإكسيل المطلوب للغوايش)
+    # ---------------------------------------------------------
+    if branch_name:
+        c.execute("SELECT OrderID FROM Orders WHERE Branch=? AND OrderDate=?", (branch_name, str(order_date)))
+        order_record = c.fetchone()
+        if order_record:
+            current_order_id = order_record[0]
+            
+            # جلب تفاصيل أوردر الغوايش لهذا الفرع
+            df_order = pd.read_sql_query("""
+                SELECT od.ModelCode as 'كود الصنف', od.Size as 'المقاس', od.RequestedQty as 'الكمية'
+                FROM OrderDetails od
+                JOIN Models m ON od.ModelCode = m.ModelCode
+                WHERE od.OrderID = ? AND m.Category = 'غويشة'
+            """, conn, params=(current_order_id,))
+            
+            if not df_order.empty:
+                st.markdown("---")
+                st.subheader(f"📊 طلبيات {branch_name} - غوايش")
+                st.caption("كشف تفصيلي بالأصناف والكميات حسب المقاسات")
+                
+                # إنشاء الـ Pivot Table لتوزيع المقاسات كأعمدة
+                pivot_df = df_order.pivot_table(index='كود الصنف', columns='المقاس', values='الكمية', aggfunc='sum', fill_value=0)
+                
+                # ضبط ترتيب الأعمدة لتشمل جميع المقاسات حتى لو لم تُطلب
+                all_sizes = ["19", "20", "21", "22", "23", "24"]
+                for s in all_sizes:
+                    if s not in pivot_df.columns:
+                        pivot_df[s] = 0
+                pivot_df = pivot_df[all_sizes]
+                
+                # تغيير أسماء الأعمدة لتصبح (مقاس 19، مقاس 20، إلخ)
+                pivot_df.columns = [f"مقاس {s}" for s in pivot_df.columns]
+                
+                # حساب إجمالي الصنف (للصفوف) والإجمالي الكلي (للأعمدة)
+                pivot_df['إجمالي الصنف'] = pivot_df.sum(axis=1)
+                pivot_df.loc['الإجمالي'] = pivot_df.sum(axis=0)
+                
+                # عرض الجدول في الواجهة
+                st.dataframe(pivot_df.style.format(precision=0), use_container_width=True)
+                
+                # زر تصدير الجدول لإكسيل
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    pivot_df.to_excel(writer, sheet_name='طلبيات الغوايش')
+                
+                st.download_button(
+                    label="📥 تحميل كشف الغوايش للفرع (Excel)",
+                    data=output.getvalue(),
+                    file_name=f"طلبيات_غوايش_{branch_name}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 # ==========================================
 # 4. شاشة جرد الخزنة
