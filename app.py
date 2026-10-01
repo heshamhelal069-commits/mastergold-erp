@@ -49,20 +49,30 @@ if choice == "تسجيل أوردر جديد":
     order_date = col3.date_input("تاريخ الأوردر", datetime.today())
     
     st.markdown("---")
-    st.subheader("إضافة أصناف للأوردر")
+    st.subheader("إضافة أصناف للأوردر (إدخال سريع)")
     
     if 'temp_order' not in st.session_state:
         st.session_state.temp_order = []
         
     with st.form("quick_add_form", clear_on_submit=True):
-        st.write("أدخل الكود واضغط Enter، أو املأ باقي الخانات واضغط 'إضافة للجدول المؤقت'")
-        col_code, col_size, col_qty, col_notes = st.columns([2, 1, 1, 2])
+        st.markdown("🔹 **للغوايش:** أدخل الكود، ثم وزع الكميات المطلوبة أسفل المقاسات مباشرة (اترك المقاس الغير مطلوب فارغاً أو صفر).")
+        
+        # تصميم الماتريكس للإدخال السريع
+        col_code, c19, c20, c21, c22, c23, c24 = st.columns([2, 1, 1, 1, 1, 1, 1])
         new_code = col_code.text_input("كود الموديل").strip().upper()
-        new_size = col_size.selectbox("المقاس (لغير الغوايش اختر 'بدون مقاس')", ["بدون مقاس", "19", "20", "21", "22", "23", "24", "أخرى"])
-        if new_size == "أخرى":
-            new_size = col_size.text_input("حدد المقاس")
-        new_qty = col_qty.number_input("العدد المطلوب", min_value=1, step=1)
-        new_notes = col_notes.text_input("ملاحظات")
+        q19 = c19.number_input("مقاس 19", min_value=0, step=1)
+        q20 = c20.number_input("مقاس 20", min_value=0, step=1)
+        q21 = c21.number_input("مقاس 21", min_value=0, step=1)
+        q22 = c22.number_input("مقاس 22", min_value=0, step=1)
+        q23 = c23.number_input("مقاس 23", min_value=0, step=1)
+        q24 = c24.number_input("مقاس 24", min_value=0, step=1)
+        
+        st.markdown("---")
+        st.markdown("🔹 **لغير الغوايش (خواتم، أطقم، سلاسل):** استخدم هذه الخانات.")
+        col_other_sz, col_other_qty, col_notes = st.columns([1, 1, 2])
+        other_size = col_other_sz.text_input("المقاس (اكتب 'بدون مقاس' إن لزم)")
+        other_qty = col_other_qty.number_input("العدد المطلوب", min_value=0, step=1)
+        new_notes = col_notes.text_input("ملاحظات الأوردر (اختياري)")
         
         submitted = st.form_submit_button("إضافة للجدول المؤقت")
         
@@ -74,18 +84,35 @@ if choice == "تسجيل أوردر جديد":
                 st.warning(f"⚠️ الموديل '{new_code}' غير مسجل. يرجى إضافته للكتالوج أولاً.")
             else:
                 category, department, unit, weight = model_data
-                actual_qty = new_qty * 2 if unit == "جوز" else new_qty
+                sizes_dict = {"19": q19, "20": q20, "21": q21, "22": q22, "23": q23, "24": q24}
+                added = False
                 
-                st.session_state.temp_order.append({
-                    "كود الموديل": new_code,
-                    "الصنف": category,
-                    "المقاس": str(new_size),
-                    "العدد المطلوب": new_qty,
-                    "العدد الفعلي": actual_qty,
-                    "ملاحظات": new_notes
-                })
-                st.success(f"تم الإضافة للجدول المؤقت: {new_code}")
+                # إضافة كميات الغوايش المدخلة في الماتريكس
+                for sz, qty in sizes_dict.items():
+                    if qty > 0:
+                        actual_qty = qty * 2 if unit == "جوز" else qty
+                        st.session_state.temp_order.append({
+                            "كود الموديل": new_code, "الصنف": category, "المقاس": sz, 
+                            "العدد المطلوب": qty, "العدد الفعلي": actual_qty, "ملاحظات": new_notes
+                        })
+                        added = True
+                        
+                # إضافة الأصناف الأخرى إن وجدت
+                if other_qty > 0:
+                    actual_qty = other_qty * 2 if unit == "جوز" else other_qty
+                    sz_val = other_size if other_size else "بدون مقاس"
+                    st.session_state.temp_order.append({
+                        "كود الموديل": new_code, "الصنف": category, "المقاس": sz_val, 
+                        "العدد المطلوب": other_qty, "العدد الفعلي": actual_qty, "ملاحظات": new_notes
+                    })
+                    added = True
+                    
+                if added:
+                    st.success(f"✅ تم إضافة مقاسات الموديل {new_code} بنجاح!")
+                else:
+                    st.warning("⚠️ يرجى إدخال كمية واحدة على الأقل في أي مقاس قبل الإضافة!")
 
+    # ================= عرض الجدول المؤقت =================
     if st.session_state.temp_order:
         st.markdown("---")
         st.subheader(f"🛒 الجدول المؤقت (الفرع: {branch_name} | التجميعة: {batch_code})")
@@ -164,7 +191,7 @@ elif choice == "جرد الخزنة":
     st.dataframe(vault_df, use_container_width=True)
 
 # ==========================================
-# 5. التخطيط واستخراج أوامر التشغيل (مُحدث)
+# 5. التخطيط واستخراج أوامر التشغيل
 # ==========================================
 elif choice == "تجميع وإصدار أوامر التشغيل":
     st.header("⚙️ أوامر التشغيل المجمعة (للنواقص فقط)")
@@ -177,7 +204,6 @@ elif choice == "تجميع وإصدار أوامر التشغيل":
         batches_list = batches_df['BatchCode'].tolist()
         selected_batch = st.selectbox("📌 اختر كود التجميعة (الأسبوع) لاستخراج نواقصه:", batches_list)
         
-        # جلب البيانات شاملة "الصنف" (Category) للتفرقة بين الغوايش وغيرها
         orders_df = pd.read_sql_query("""
             SELECT 
                 o.ModelCode, m.Category, m.Department, o.Size, o.Notes, SUM(o.ActualQty) as TotalRequired 
@@ -191,15 +217,12 @@ elif choice == "تجميع وإصدار أوامر التشغيل":
         if orders_df.empty:
             st.info("👍 لا توجد نواقص للتشغيل في هذه التجميعة.")
         else:
-            # عرض البيانات على الشاشة
             st.dataframe(orders_df.rename(columns={'ModelCode':'الكود', 'Category': 'الصنف', 'Department':'القسم', 'Size':'المقاس', 'Notes':'ملاحظات', 'TotalRequired':'العدد المطلوب'}), use_container_width=True)
             
-            # تصدير الإكسيل بتنسيق الماتريكس للغوايش
             if st.button(f"📥 تحميل أوامر تشغيل مصنع ({selected_batch})", type="primary"):
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     
-                    # 1. معالجة الغوايش وتحويلها إلى Pivot (ماتريكس)
                     bangles_df = orders_df[orders_df['Category'] == 'غويشة'].copy()
                     if not bangles_df.empty:
                         pivot_bangles = bangles_df.pivot_table(index='ModelCode', columns='Size', values='TotalRequired', aggfunc='sum', fill_value=0)
@@ -215,7 +238,6 @@ elif choice == "تجميع وإصدار أوامر التشغيل":
                         pivot_bangles.index.name = 'الكود'
                         pivot_bangles.to_excel(writer, sheet_name='غوايش_ماتريكس')
 
-                    # 2. معالجة باقي الأصناف بناءً على أقسام التشغيل (شمع، هولو...)
                     other_df = orders_df[orders_df['Category'] != 'غويشة'].copy()
                     if not other_df.empty:
                         for dept in other_df['Department'].unique():
